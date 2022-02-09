@@ -34,7 +34,7 @@ func main() {
     if err != nil {
 		panic(err)
     }
-	fmt.Printf("www.google.com's ip is: %s\n", ip)
+	fmt.Printf("www.google.com's ip is: %+v\n", ip)
 
 	hosts := hosts.ReverseLookup("127.0.0.1")
 	fmt.Printf("hosts belongs to 127.0.0.1 are: %+v\n", hosts)

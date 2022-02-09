@@ -37,7 +37,7 @@ func TestGhost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Equal(t, "127.0.0.1", ip)
+	assert.Equal(t, []string{"127.0.0.1"}, ip)
 
 	host := ghost.ReverseLookup("127.0.0.1")
 	if err != nil {

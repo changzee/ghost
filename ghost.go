@@ -19,13 +19,13 @@ type Ghost struct {
 	watcher *fsnotify.Watcher
 }
 
-func parseHosts(hosts string) (map[string]string, error) {
+func parseHosts(hosts string) (map[string][]string, error) {
 	contents, err := ioutil.ReadFile(hosts)
 	if err != nil {
 		return nil, err
 	}
 
-	var hostsMap = make(map[string]string, 64)
+	var hostsMap = make(map[string][]string, 64)
 	lines := strings.Split(strings.Trim(string(contents), " \t\r\n"), "\n")
 	for _, line := range lines {
 		line = strings.Replace(strings.Trim(line, " \t"), "\t", " ", -1)
@@ -36,7 +36,7 @@ func parseHosts(hosts string) (map[string]string, error) {
 		if len(pieces) > 1 && len(pieces[0]) > 0 {
 			if names := strings.Fields(pieces[1]); len(names) > 0 {
 				for _, name := range names {
-					hostsMap[name] = pieces[0]
+					hostsMap[name] = append(hostsMap[name], pieces[0])
 				}
 			}
 		}
@@ -66,11 +66,11 @@ func (g *Ghost) WriteHosts(ip string, hostname string) error {
 }
 
 // Lookup takes a host and returns a ip address.
-func (g *Ghost) Lookup(hostname string) (string, error) {
-	hostsMap := g.hostsMap.Load().(map[string]string)
+func (g *Ghost) Lookup(hostname string) ([]string, error) {
+	hostsMap := g.hostsMap.Load().(map[string][]string)
 	value, ok := hostsMap[hostname]
 	if !ok {
-		return "", errors.New("not exist")
+		return value, errors.New("not exist")
 	}
 	return value, nil
 }
@@ -79,9 +79,11 @@ func (g *Ghost) Lookup(hostname string) (string, error) {
 // entries.
 func (g *Ghost) ReverseLookup(ip string) []string {
 	var hosts = make([]string, 0, 32)
-	for key, value := range g.hostsMap.Load().(map[string]string) {
-		if value == ip {
-			hosts = append(hosts, key)
+	for key, ips := range g.hostsMap.Load().(map[string][]string) {
+		for _, v := range ips {
+			if v == ip {
+				hosts = append(hosts, key)
+			}
 		}
 	}
 	return hosts
