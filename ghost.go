@@ -7,27 +7,25 @@ import (
 	"log"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
-	"unsafe"
 
 	"github.com/fsnotify/fsnotify"
 )
 
 type Ghost struct {
-	hostsMap *sync.Map
+	hostsMap atomic.Value
 
 	hosts   string
 	watcher *fsnotify.Watcher
 }
 
-func parseHosts(hosts string) (*sync.Map, error) {
+func parseHosts(hosts string) (map[string]string, error) {
 	contents, err := ioutil.ReadFile(hosts)
 	if err != nil {
 		return nil, err
 	}
 
-	var hostsMap = sync.Map{}
+	var hostsMap = make(map[string]string, 64)
 	lines := strings.Split(strings.Trim(string(contents), " \t\r\n"), "\n")
 	for _, line := range lines {
 		line = strings.Replace(strings.Trim(line, " \t"), "\t", " ", -1)
@@ -38,12 +36,17 @@ func parseHosts(hosts string) (*sync.Map, error) {
 		if len(pieces) > 1 && len(pieces[0]) > 0 {
 			if names := strings.Fields(pieces[1]); len(names) > 0 {
 				for _, name := range names {
-					hostsMap.Store(name, pieces[0])
+					hostsMap[name] = pieces[0]
 				}
 			}
 		}
 	}
-	return &hostsMap, nil
+	return hostsMap, nil
+}
+
+// GetHostsFile return the host file that parsing.
+func (g *Ghost) GetHostsFile() string {
+	return g.hosts
 }
 
 // WriteHosts write a ip-host kv to host file.
@@ -55,7 +58,7 @@ func (g *Ghost) WriteHosts(ip string, hostname string) error {
 	defer func() { _ = file.Close() }()
 
 	writer := bufio.NewWriter(file)
-	_, err = writer.WriteString("\n" + ip + "_" + hostname)
+	_, err = writer.WriteString("\n" + ip + " " + hostname)
 	if err != nil {
 		return err
 	}
@@ -64,26 +67,23 @@ func (g *Ghost) WriteHosts(ip string, hostname string) error {
 
 // Lookup takes a host and returns a ip address.
 func (g *Ghost) Lookup(hostname string) (string, error) {
-	unsafePointer := unsafe.Pointer(g.hostsMap)
-	hostsMap := (*sync.Map)(atomic.LoadPointer(&unsafePointer))
-
-	value, ok := hostsMap.Load(hostname)
+	hostsMap := g.hostsMap.Load().(map[string]string)
+	value, ok := hostsMap[hostname]
 	if !ok {
 		return "", errors.New("not exist")
 	}
-	return value.(string), nil
+	return value, nil
 }
 
 // ReverseLookup takes an IP address and returns a slice of matching hosts file
 // entries.
 func (g *Ghost) ReverseLookup(ip string) []string {
 	var hosts = make([]string, 0, 32)
-	g.hostsMap.Range(func(key, value interface{}) bool {
-		if value.(string) == ip {
-			hosts = append(hosts, key.(string))
+	for key, value := range g.hostsMap.Load().(map[string]string) {
+		if value == ip {
+			hosts = append(hosts, key)
 		}
-		return true
-	})
+	}
 	return hosts
 }
 
@@ -93,7 +93,6 @@ func (g *Ghost) watchChange() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func() { _ = watcher.Close() }()
 
 	// add host file to watcher
 	err = watcher.Add(g.hosts)
@@ -102,6 +101,8 @@ func (g *Ghost) watchChange() {
 	}
 
 	go func() {
+		defer func() { _ = watcher.Close() }()
+
 		for {
 			select {
 			case event, ok := <-watcher.Events:
@@ -115,8 +116,8 @@ func (g *Ghost) watchChange() {
 							log.Println("error:", err)
 							continue
 						}
-						unsafePointer := unsafe.Pointer(g.hostsMap)
-						atomic.StorePointer(&unsafePointer, unsafe.Pointer(hostsMap))
+
+						g.hostsMap.Store(hostsMap)
 					}
 				}
 			case err, ok := <-watcher.Errors:
@@ -134,15 +135,16 @@ func NewGhost(host ...string) (*Ghost, error) {
 		host = []string{HostsFile}
 	}
 
+	var ghost = Ghost{
+		hosts:   host[0],
+		watcher: nil,
+	}
+
 	hostsMap, err := parseHosts(host[0])
 	if err != nil {
 		return nil, err
 	}
-	var ghost = Ghost{
-		hosts:    host[0],
-		hostsMap: hostsMap,
-		watcher:  nil,
-	}
-	go ghost.watchChange()
+	ghost.hostsMap.Store(hostsMap)
+	ghost.watchChange()
 	return &ghost, nil
 }
